@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>防災ナビ - 災害時連絡＆ハザードマップ</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Leaflet CSS & JS for Interactive Hazard Maps -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            danger: '#dc2626',
+            warning: '#f59e0b',
+            safe: '#10b981',
+            brand: '#2563eb'
+          }
+        }
+      }
+    }
+  </script>
+  
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      touch-action: manipulation;
+    }
+    #map {
+      width: 100%;
+      height: 100%;
+      min-height: 350px;
+      z-index: 1;
+    }
+    .strobe {
+      animation: strobeAnim 0.3s infinite alternate;
+    }
+    @keyframes strobeAnim {
+      0% { background-color: #ffffff; }
+      100% { background-color: #dc2626; }
+    }
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 flex flex-col h-screen overflow-hidden">
+
+  <header class="bg-red-600 text-white p-3 shadow-md flex justify-between items-center z-10">
+    <div class="flex items-center space-x-2">
+      <i class="fa-solid fa-shield-halved text-2xl text-yellow-300"></i>
+      <div>
+        <h1 class="font-extrabold text-lg leading-tight">防災ナビ</h1>
+        <p id="gpsStatus" class="text-xs text-red-100 flex items-center gap-1">
+          <i class="fa-solid fa-location-dot animate-pulse"></i> 現在地を取得中...
+        </p>
+      </div>
+    </div>
+    <button id="sosLightBtn" onclick="toggleSOSLight()" class="bg-yellow-400 text-red-900 px-3 py-1.5 rounded-full text-xs font-bold shadow hover:bg-yellow-300 transition flex items-center gap-1 active:scale-95">
+      <i class="fa-solid fa-lightbulb"></i> SOSライト
+    </button>
+  </header>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 overflow-y-auto relative bg-slate-50">
+    
+    <!-- Notification Toast -->
+    <div id="toast" class="hidden fixed top-16 left-1/2 transform -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2 rounded-lg shadow-xl text-sm transition-all duration-300 flex items-center gap-2">
+      <i class="fa-solid fa-circle-info text-yellow-400"></i>
+      <span id="toastMsg">メッセージ</span>
+    </div>
+
+    <section id="tab-contacts" class="p-4 space-y-4 max-w-lg mx-auto pb-20">
+      
+      <!-- Quick Rescue Siren Alarm -->
+      <div class="bg-red-50 border-2 border-red-300 rounded-2xl p-4 shadow-sm">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-xs font-bold text-red-700 uppercase tracking-wider"><i class="fa-solid fa-bullhorn mr-1"></i> 緊急用レスキューブザー</span>
+          <span class="text-xs text-slate-500">大音量注意</span>
+        </div>
+        <button id="buzzerBtn" onclick="toggleBuzzer()" class="w-full bg-red-600 hover:bg-red-700 text-white font-black text-xl py-3 rounded-xl shadow-md transition flex items-center justify-center gap-3 active:scale-98">
+          <i class="fa-solid fa-volume-high text-2xl animate-pulse"></i>
+          <span id="buzzerText">SOSブザーを鳴らす</span>
+        </button>
+      </div>
+
+      <!-- Family Contacts List -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-users text-brand"></i> 家族の連絡先
+          </h2>
+          <button onclick="openAddContactModal()" class="text-xs bg-brand text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 font-semibold flex items-center gap-1 active:scale-95">
+            <i class="fa-solid fa-plus"></i> 追加
+          </button>
+        </div>
+
+        <div id="familyList" class="space-y-3">
+          <!-- Dynamic contact entries inserted here -->
+        </div>
+      </div>
+
+      <!-- Official Emergency Hotline Shortcuts -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <h2 class="text-base font-bold text-slate-800 mb-3 flex items-center gap-2">
+          <i class="fa-solid fa-phone-volume text-red-600"></i> 緊急機関・伝言ダイヤル
+        </h2>
+        <div class="grid grid-cols-2 gap-3">
+          <a href="tel:119" class="p-3 bg-red-100 hover:bg-red-200 text-red-900 rounded-xl flex flex-col items-center justify-center border border-red-200 transition active:scale-95">
+            <i class="fa-solid fa-truck-medical text-2xl text-red-600 mb-1"></i>
+            <span class="font-extrabold text-lg">119</span>
+            <span class="text-xs text-slate-600">消防・救急</span>
+          </a>
+          <a href="tel:110" class="p-3 bg-blue-100 hover:bg-blue-200 text-blue-900 rounded-xl flex flex-col items-center justify-center border border-blue-200 transition active:scale-95">
+            <i class="fa-solid fa-shield-cat text-2xl text-blue-600 mb-1"></i>
+            <span class="font-extrabold text-lg">110</span>
+            <span class="text-xs text-slate-600">警察</span>
+          </a>
+          <a href="tel:171" class="p-3 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-xl flex flex-col items-center justify-center border border-amber-200 transition active:scale-95">
+            <i class="fa-solid fa-tape text-2xl text-amber-600 mb-1"></i>
+            <span class="font-extrabold text-lg">171</span>
+            <span class="text-xs text-slate-600">災害用伝言ダイヤル</span>
+          </a>
+          <a href="tel:118" class="p-3 bg-teal-100 hover:bg-teal-200 text-teal-900 rounded-xl flex flex-col items-center justify-center border border-teal-200 transition active:scale-95">
+            <i class="fa-solid fa-ship text-2xl text-teal-600 mb-1"></i>
+            <span class="font-extrabold text-lg">118</span>
+            <span class="text-xs text-slate-600">海上保安庁</span>
+          </a>
+        </div>
+      </div>
+
+    </section>
+
+    <section id="tab-map" class="hidden flex-col h-[calc(100vh-125px)] w-full">
+      <!-- Hazard Map Layer Selector Toolbar -->
+      <div class="bg-white p-2 border-b border-slate-200 shadow-sm flex items-center gap-2 overflow-x-auto no-scrollbar text-xs z-10 flex-shrink-0">
+        <span class="font-bold whitespace-nowrap text-slate-600 pl-2"><i class="fa-solid fa-layer-group"></i> 表示切替:</span>
+        <button onclick="setMapLayer('std')" id="btn-layer-std" class="px-3 py-1.5 rounded-full font-bold bg-brand text-white whitespace-nowrap shadow-sm">標準地図</button>
+        <button onclick="setMapLayer('flood')" id="btn-layer-flood" class="px-3 py-1.5 rounded-full font-bold bg-slate-100 text-slate-700 whitespace-nowrap hover:bg-slate-200">洪水浸水想定</button>
+        <button onclick="setMapLayer('sediment')" id="btn-layer-sediment" class="px-3 py-1.5 rounded-full font-bold bg-slate-100 text-slate-700 whitespace-nowrap hover:bg-slate-200">土砂災害警戒</button>
+        <button onclick="setMapLayer('tsunami')" id="btn-layer-tsunami" class="px-3 py-1.5 rounded-full font-bold bg-slate-100 text-slate-700 whitespace-nowrap hover:bg-slate-200">津波浸水想定</button>
+      </div>
+
+      <!-- Leaflet Map Container -->
+      <div class="relative flex-1 w-full h-full min-h-0">
+        <div id="map" class="w-full h-full"></div>
+        
+        <!-- Locate User Button -->
+        <button onclick="locateUser()" class="absolute bottom-5 right-5 z-[1000] bg-white text-slate-800 p-3.5 rounded-full shadow-lg border border-slate-200 hover:bg-slate-50 transition active:scale-95">
+          <i class="fa-solid fa-crosshairs text-xl text-brand"></i>
+        </button>
+      </div>
+
+      <!-- Portal Banner Footer -->
+      <div class="bg-slate-800 text-white p-2.5 text-xs flex justify-between items-center flex-shrink-0">
+        <div>
+          <p class="font-bold">国土地理院 ハザードマップポータル</p>
+          <p class="text-slate-400 text-[10px]">国・自治体提供の重ねるハザードマップ連携</p>
+        </div>
+        <a href="https://disaportal.gsi.go.jp/" target="_blank" rel="noopener noreferrer" class="bg-yellow-400 text-slate-900 font-bold px-3 py-1 rounded-lg hover:bg-yellow-300 transition">
+          公式ポータル <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+        </a>
+      </div>
+    </section>
+
+    <section id="tab-message" class="hidden p-4 space-y-4 max-w-lg mx-auto pb-20">
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <h2 class="text-base font-bold text-slate-800 mb-2 flex items-center gap-2">
+          <i class="fa-solid fa-comment-sms text-brand"></i> 安否確認メッセージ作成
+        </h2>
+        <p class="text-xs text-slate-500 mb-4">状況を選ぶだけで、現在地のGoogleマップリンク付きメッセージを作成・共有できます。</p>
+
+        <!-- Status Template Buttons -->
+        <label class="block text-xs font-bold text-slate-700 mb-1">1. 現在の状況を選択</label>
+        <div class="grid grid-cols-2 gap-2 mb-4">
+          <button onclick="setStatus('無事です。安全な場所にいます。')" class="status-btn p-2.5 text-xs text-left border rounded-xl border-slate-200 hover:border-brand font-semibold text-slate-700 bg-slate-50 transition active:scale-95">
+            🟢 無事です（安全確保）
+          </button>
+          <button onclick="setStatus('避難所に向かって移動中です。')" class="status-btn p-2.5 text-xs text-left border rounded-xl border-slate-200 hover:border-brand font-semibold text-slate-700 bg-slate-50 transition active:scale-95">
+            🚶 避難移動中
+          </button>
+          <button onclick="setStatus('避難所に到着しました。')" class="status-btn p-2.5 text-xs text-left border rounded-xl border-slate-200 hover:border-brand font-semibold text-slate-700 bg-slate-50 transition active:scale-95">
+            🏫 避難所に到着
+          </button>
+          <button onclick="setStatus('怪我・動けない状態です。助けが必要です。')" class="status-btn p-2.5 text-xs text-left border rounded-xl border-red-300 hover:border-red-500 font-semibold text-red-700 bg-red-50 transition active:scale-95">
+            🚨 救助・支援が必要
+          </button>
+        </div>
+
+        <!-- Extra Note Field -->
+        <div class="mb-4">
+          <label for="customMessage" class="block text-xs font-bold text-slate-700 mb-1">2. 補足メッセージ・現在地詳細</label>
+          <textarea id="customMessage" rows="3" placeholder="（例）市役所体育館にいます。水と毛布があります。" class="w-full text-xs p-2.5 border rounded-xl border-slate-300 focus:ring-2 focus:ring-brand focus:border-transparent outline-none"></textarea>
+        </div>
+
+        <!-- Location Checkbox -->
+        <div class="flex items-center gap-2 mb-4 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+          <input type="checkbox" id="attachLocation" checked class="w-4 h-4 text-brand rounded border-slate-300 focus:ring-brand">
+          <label for="attachLocation" class="text-xs font-bold text-slate-700 flex-1 cursor-pointer">
+            Google マップの現在地リンクを添える
+          </label>
+        </div>
+
+        <!-- Text Preview Container -->
+        <div class="mb-4">
+          <label class="block text-xs font-bold text-slate-700 mb-1">送信プレビュー</label>
+          <div id="previewBox" class="bg-slate-100 p-3 rounded-xl text-xs text-slate-800 break-all font-mono border border-slate-200 min-h-[60px]">
+            【安否情報】メッセージを作成してください。
+          </div>
+        </div>
+
+        <!-- Quick Share Buttons -->
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick="sendLINE()" class="bg-[#06C755] hover:bg-[#05b34c] text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition active:scale-95">
+            <i class="fa-brands fa-line text-lg"></i> LINEで送る
+          </button>
+          <button onclick="sendSMS()" class="bg-brand hover:bg-blue-700 text-white font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-2 shadow-sm transition active:scale-95">
+            <i class="fa-solid fa-comment text-base"></i> SMSで送る
+          </button>
+          <button onclick="copyToClipboard()" class="col-span-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs py-2.5 rounded-xl flex items-center justify-center gap-2 transition active:scale-95">
+            <i class="fa-solid fa-copy"></i> テキストをコピー
+          </button>
+        </div>
+
+      </div>
+    </section>
+
+    <section id="tab-guide" class="hidden p-4 space-y-4 max-w-lg mx-auto pb-20">
+      
+      <!-- Disaster Dial 171 How-to -->
+      <div class="bg-amber-50 rounded-2xl p-4 shadow-sm border border-amber-200">
+        <h2 class="text-base font-bold text-amber-900 mb-2 flex items-center gap-2">
+          <i class="fa-solid fa-phone-volume text-amber-600"></i> 171 伝言ダイヤルの使い方
+        </h2>
+        <div class="space-y-2 text-xs text-amber-950">
+          <div class="bg-white p-2.5 rounded-xl border border-amber-200">
+            <p class="font-bold text-amber-800">録音する場合 (自分の無事を伝える)</p>
+            <p>1. <strong class="text-red-600">171</strong> にダイヤル → <strong class="text-red-600">「1」</strong> を押す</p>
+            <p>2. 市外局番からの電話番号を入力（例: 0312345678）</p>
+            <p>3. 30秒以内でメッセージを録音</p>
+          </div>
+          <div class="bg-white p-2.5 rounded-xl border border-amber-200">
+            <p class="font-bold text-amber-800">再生する場合 (家族の安否を聞く)</p>
+            <p>1. <strong class="text-red-600">171</strong> にダイヤル → <strong class="text-red-600">「2」</strong> を押す</p>
+            <p>2. 相手の電話番号を市外局番から入力</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Emergency Checklist -->
+      <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200">
+        <div class="flex justify-between items-center mb-3">
+          <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+            <i class="fa-solid fa-clipboard-check text-safe"></i> 防災持ち出し品チェック
+          </h2>
+          <span id="checkProgress" class="text-xs font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full">0/6</span>
+        </div>
+        
+        <div class="space-y-2 text-xs" id="checklist">
+          <label class="flex items-center gap-3 p-2 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition">
+            <input type="checkbox" onchange="updateChecklist()" class="w-4 h-4 text-safe rounded border-slate-300 focus:ring-safe">
+            <span class="font-semibold text-slate-700">飲料水（1人1日3L目安）・非常食</span>
+          </label>
+          <label class="flex items-center gap-3 p-2 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition">
+            <input type="checkbox" onchange="updateChecklist()" class="w-4 h-4 text-safe rounded border-slate-300 focus:ring-safe">
+            <span class="font-semibold text-slate-700">モバイルバッテリー＆充電コード</span>
+          </label>
+          <label class="flex items-center gap-3 p-2 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition">
+            <input type="checkbox" onchange="updateChecklist()" class="w-4 h-4 text-safe rounded border-slate-300 focus:ring-safe">
+            <span class="font-semibold text-slate-700">常備薬・お薬手帳・現金（小銭含む）</span>
+          </label>
+          <label class="flex items-center gap-3 p-2 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition">
+            <input type="checkbox" onchange="updateChecklist()" class="w-4 h-4 text-safe rounded border-slate-300 focus:ring-safe">
+            <span class="font-semibold text-slate-700">懐中電灯・簡易トイレ・衛生用品</span>
+          </label>
+          <label class="flex items-center gap-3 p-2 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition">
+            <input type="checkbox" onchange="updateChecklist()" class="w-4 h-4 text-safe rounded border-slate-300 focus:ring-safe">
+            <span class="font-semibold text-slate-700">レインウェア・ヘルメット・厚手の靴</span>
+          </label>
+          <label class="flex items-center gap-3 p-2 bg-slate-50 rounded-xl cursor-pointer hover:bg-slate-100 transition">
+            <input type="checkbox" onchange="updateChecklist()" class="w-4 h-4 text-safe rounded border-slate-300 focus:ring-safe">
+            <span class="font-semibold text-slate-700">身分証明書のコピー・家族の連絡先メモ</span>
+          </label>
+        </div>
+      </div>
+
+    </section>
+  </main>
+
+  <nav class="bg-white border-t border-slate-200 fixed bottom-0 left-0 right-0 z-20 max-w-lg mx-auto shadow-lg">
+    <div class="grid grid-cols-4 text-center text-xs font-semibold">
+      <button onclick="switchTab('contacts')" id="tab-btn-contacts" class="py-2.5 text-brand flex flex-col items-center gap-1">
+        <i class="fa-solid fa-phone text-lg"></i>
+        <span>緊急連絡</span>
+      </button>
+      <button onclick="switchTab('map')" id="tab-btn-map" class="py-2.5 text-slate-400 flex flex-col items-center gap-1 hover:text-slate-600">
+        <i class="fa-solid fa-map-location-dot text-lg"></i>
+        <span>ハザードマップ</span>
+      </button>
+      <button onclick="switchTab('message')" id="tab-btn-message" class="py-2.5 text-slate-400 flex flex-col items-center gap-1 hover:text-slate-600">
+        <i class="fa-solid fa-paper-plane text-lg"></i>
+        <span>安否送信</span>
+      </button>
+      <button onclick="switchTab('guide')" id="tab-btn-guide" class="py-2.5 text-slate-400 flex flex-col items-center gap-1 hover:text-slate-600">
+        <i class="fa-solid fa-book-medical text-lg"></i>
+        <span>防災ガイド</span>
+      </button>
+    </div>
+  </nav>
+
+  <div id="addContactModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-xs w-full p-5 shadow-2xl space-y-4 transform transition-all">
+      <h3 class="font-bold text-base text-slate-800 flex items-center gap-2">
+        <i class="fa-solid fa-user-plus text-brand"></i> 家族の連絡先を追加
+      </h3>
+      <div class="space-y-3 text-xs">
+        <div>
+          <label for="contactName" class="block font-bold text-slate-700 mb-1">名前 (例: お母さん)</label>
+          <input type="text" id="contactName" class="w-full p-2.5 border rounded-xl border-slate-300 focus:ring-2 focus:ring-brand outline-none" placeholder="名前を入力">
+        </div>
+        <div>
+          <label for="contactPhone" class="block font-bold text-slate-700 mb-1">電話番号</label>
+          <input type="tel" id="contactPhone" class="w-full p-2.5 border rounded-xl border-slate-300 focus:ring-2 focus:ring-brand outline-none" placeholder="09012345678">
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="closeAddContactModal()" class="flex-1 py-2 rounded-xl bg-slate-100 text-slate-600 font-bold text-xs hover:bg-slate-200">キャンセル</button>
+        <button onclick="saveContact()" class="flex-1 py-2 rounded-xl bg-brand text-white font-bold text-xs hover:bg-blue-700">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sosOverlay" class="hidden fixed inset-0 z-50 flex flex-col items-center justify-between p-6 transition-all duration-300">
+    <div class="text-center mt-10">
+      <h2 class="text-3xl font-black text-black">SOS ライト点灯中</h2>
+      <p class="text-sm font-bold text-slate-800 mt-2">夜間や暗闇で存在を伝えるフラッシュライトです</p>
+    </div>
+    <button onclick="toggleSOSLight()" class="bg-slate-900 text-white font-black px-8 py-4 rounded-full text-lg shadow-2xl active:scale-95 transition">
+      ライトを消す
+    </button>
+  </div>
+
+  <script>
+    let contacts = [
+      { id: 1, name: 'お父さん', phone: '090-0000-0000' },
+      { id: 2, name: '自宅電話', phone: '03-0000-0000' }
+    ];
+
+    let userLocation = { lat: 35.681236, lng: 139.767125 }; // Default fallback
+    let map = null;
+    let userMarker = null;
+    let currentLayer = null;
+    let select
